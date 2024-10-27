@@ -1,304 +1,159 @@
-; ==========================
-; GROUP MEMBER 01: MICHAEL TODD U23540223
-; GROUP MEMBER 02: CORNE DE LANGE U23788862
-; GROUP MEMBER 03: COBUS BOTHA U23556502
-; ==========================
-
-; READS BINARY P6 FORMAT PPM FILES AND CREATES A LINKED PIXEL STRUCTURE
-; EACH PIXEL CONNECTS TO ADJACENT PIXELS (ABOVE, BELOW, LEFT, RIGHT)
-
-; EXTERNAL C LIBRARY FUNCTION DECLARATIONS
-extern fgetc    ; READ SINGLE CHARACTER (USES RDI FOR FILE*)
-extern ungetc   ; PUSH CHARACTER BACK (USES EDI FOR CHAR, RSI FOR FILE*)
-extern fopen    ; OPEN FILE (USES RDI FOR FILENAME, RSI FOR MODE)
-extern fscanf   ; READ FORMATTED INPUT (USES RDI FOR FILE*, RSI FOR FORMAT)
-extern strcmp   ; COMPARE STRINGS (USES RDI AND RSI FOR STRINGS)
-extern malloc   ; ALLOCATE MEMORY (USES RDI FOR SIZE)
-extern fread    ; READ BINARY DATA (USES RDI, RSI, RDX, RCX)
-extern free     ; FREE MEMORY (USES RDI FOR POINTER)
-extern fclose   ; CLOSE FILE (USES RDI FOR FILE*)
-
 section .data
-    rb_mode     db "rb", 0       ; BINARY READ MODE FOR FOPEN
-    fmt_str     db "%s", 10, 0   ; FORMAT FOR READING MAGIC NUMBER
-    fmt_nums    db "%d %d", 10, "%d", 10, 0  ; FORMAT FOR DIMENSIONS AND MAX VALUE
-    magic_p6    db "P6", 0       ; PPM P6 FORMAT IDENTIFIER
+    max_buffer_size equ 512
+    open_failed_msg db "Error: Could not open the PPM file.", 0
+    read_failed_msg db "Error: Could not read the PPM file.", 0
+    parse_failed_msg db "Error: Failed to parse the PPM header.", 0
+    open_file_msg db "Attempting to open file: ", 0
+    newline db 10, 0
+
+section .bss
+    buffer resb max_buffer_size
+    width resd 1
+    height resd 1
+    max_color_value resd 1
+    pixel_head resq 1
+    current_pixel resq 1
+    previous_row_head resq 1
 
 section .text
-global skipComments
-global readPPM
-
-; FUNCTION: SKIPCOMMENTS
-; PURPOSE: SKIPS COMMENT LINES (STARTING WITH #) IN PPM FILE
-; PARAMETERS: RDI - FILE* POINTER TO OPEN PPM FILE
-; LOCAL VARIABLES (STACK-BASED):
-;   RBP-24: FILE* STORAGE
-;   RBP-1:  CURRENT CHARACTER
-skipComments:
-    push    rbp                 ; SAVE OLD BASE POINTER
-    mov     rbp, rsp            ; SET UP NEW STACK FRAME
-    sub     rsp, 32             ; ALLOCATE 32 BYTES LOCAL STORAGE
-    mov     [rbp-24], rdi       ; STORE FILE* FOR LATER USE
-
-.read_char:                     ; LOOP TO READ CHARACTERS
-    mov     rax, [rbp-24]       ; RAX = FILE*
-    mov     rdi, rax            ; RDI = PARAMETER FOR FGETC
-    call    fgetc               ; READ ONE CHARACTER
-    mov     [rbp-1], al         ; STORE CHARACTER (AL = LOWER BYTE OF RAX)
-    cmp     byte [rbp-1], 35    ; COMPARE WITH '#' (ASCII 35)
-    je      .skip_comment_line
-    movsx   eax, byte [rbp-1]   ; SIGN-EXTEND CHAR FOR UNGETC
-    mov     rdx, [rbp-24]       
-    mov     rsi, rdx            ; RSI = FILE* FOR UNGETC
-    mov     edi, eax            ; EDI = CHARACTER TO PUSH BACK
-    call    ungetc
-    jmp     .skip_comments_end
-
-.skip_comment_line:             
-.read_until_newline:            
-    mov     rax, [rbp-24]       
-    mov     rdi, rax            ; RDI = FILE* FOR FGETC
-    call    fgetc               
-    mov     [rbp-1], al         ; STORE READ CHARACTER
-    cmp     byte [rbp-1], 10    ; COMPARE WITH NEWLINE (ASCII 10)
-    je      .read_char          
-    cmp     byte [rbp-1], -1    ; COMPARE WITH EOF (-1)
-    jne     .read_until_newline
-    jmp     .read_char
-
-.skip_comments_end:             
-    leave                       ; RESTORE STACK FRAME
-    ret
-
-; FUNCTION: READPPM
-; PURPOSE: READS PPM FILE AND BUILDS LINKED PIXEL STRUCTURE
-; PARAMETERS: RDI - FILENAME STRING POINTER
-; RETURNS: RAX - POINTER TO FIRST PIXEL OR NULL IF ERROR
-; PIXEL STRUCTURE (40 BYTES):
-;   BYTES 0-2:   RGB VALUES
-;   BYTE 3:      PADDING
-;   BYTES 4-11:  ABOVE PIXEL POINTER
-;   BYTES 12-19: BELOW PIXEL POINTER
-;   BYTES 20-27: LEFT PIXEL POINTER
-;   BYTES 28-35: RIGHT PIXEL POINTER
-; LOCAL VARIABLES:
-;   RBP-88: FILENAME
-;   RBP-80: MAX COLOR VALUE
-;   RBP-76: HEIGHT
-;   RBP-72: WIDTH
-;   RBP-67: MAGIC NUMBER BUFFER
-;   RBP-64: CURRENT PIXEL
-;   RBP-56: FIRST PIXEL
-;   RBP-48: ROW POINTERS ARRAY
-;   RBP-40: FILE POINTER
-;   RBP-28: COLUMN COUNTER
-;   RBP-24: PREVIOUS PIXEL
-;   RBP-12: ROW COUNTER
-;   RBP-8:  ABOVE PIXEL
-
+    extern malloc
+    extern open, read, close, write
+    global readPPM
+    global pixel_head
 
 readPPM:
-    push    rbp
-    mov     rbp, rsp
-    sub     rsp, 96             ; ALLOCATE LOCAL VARIABLES SPACE
+    ; Function prologue
+    push rbp
+    mov rbp, rsp
+    sub rsp, 32
 
-    mov     [rbp-88], rdi       ; STORE FILENAME POINTER
+    ; Initialize pixel_head to NULL
+    mov qword [pixel_head], 0
 
-    ; OPEN FILE IN BINARY READ MODE
-    mov     rax, [rbp-88]       ; RAX = FILENAME
-    mov     rsi, rb_mode        ; RSI = "RB"
-    mov     rdi, rax            ; RDI = FILENAME FOR FOPEN
-    call    fopen
-    mov     [rbp-40], rax       ; STORE FILE*
-    
-    ; CHECK FILE OPEN SUCCESS
-    cmp     qword [rbp-40], 0   ; COMPARE FILE* WITH NULL
-    jne     .process_file
-    xor     eax, eax            ; RETURN NULL IF OPEN FAILED
-    jmp     .readPPM_end
+    ; Print the filename to help with debugging
+    mov rsi, [rbp+16]          ; Load the filename from function arguments
+    call print_filename
 
-.process_file:                  
-    ; READ PPM MAGIC NUMBER
-    lea     rdx, [rbp-67]       ; RDX = BUFFER FOR MAGIC NUMBER
-    mov     rax, [rbp-40]       ; RAX = FILE*
-    mov     rsi, fmt_str        ; RSI = FORMAT STRING
-    mov     rdi, rax            ; RDI = FILE* FOR FSCANF
-    xor     eax, eax            ; CLEAR AL (VARARGS COUNT)
-    call    fscanf
+    ; Open the file in binary read mode
+    mov rdi, rsi               ; Filename from parameter
+    xor rsi, rsi               ; O_RDONLY
+    call open
+    test rax, rax
+    js .open_failed            ; If open failed, jump to error
+    mov rdi, rax               ; File descriptor
 
-    ; SKIP HEADER COMMENTS
-    mov     rax, [rbp-40]       
-    mov     rdi, rax            ; RDI = FILE* FOR SKIPCOMMENTS
-    call    skipComments
+    ; Read the PPM header
+    mov rsi, buffer
+    mov rdx, max_buffer_size
+    call read
+    test rax, rax
+    js .read_failed            ; If read failed, jump to error
 
-    ; READ IMAGE DIMENSIONS AND MAX VALUE
-    lea     rsi, [rbp-80]       ; MAX COLOR VALUE ADDRESS
-    lea     rcx, [rbp-76]       ; HEIGHT ADDRESS
-    lea     rdx, [rbp-72]       ; WIDTH ADDRESS
-    mov     rax, [rbp-40]       ; FILE*
-    mov     r8, rsi             ; R8 = MAX VALUE PTR FOR FSCANF
-    mov     rsi, fmt_nums       ; RSI = FORMAT STRING
-    mov     rdi, rax            ; RDI = FILE*
-    xor     eax, eax            ; CLEAR AL (VARARGS COUNT)
-    call    fscanf
+    ; Parse the header to extract width, height, and max_color_value
+    call parseHeader
+    test rax, rax
+    jz .parse_failed
 
-    ; VERIFY PPM FORMAT
-    lea     rax, [rbp-67]       ; MAGIC NUMBER BUFFER
-    mov     rsi, magic_p6       ; "P6" STRING
-    mov     rdi, rax            ; COMPARE PARAMETERS
-    call    strcmp
-    test    eax, eax            ; CHECK IF STRINGS MATCH
-    jne     .close_invalid_file
-    
-    mov     eax, [rbp-80]       
-    cmp     eax, 255            ; VERIFY MAX COLOR VALUE
-    je      .process_valid_file
+    ; Initialize the linked list of PixelNodes
+    call createPixelLinkedList
+    test rax, rax
+    jz .create_failed          ; If creation failed, jump to error
 
-.close_invalid_file:           
-    mov     rax, [rbp-40]       
-    mov     rdi, rax            ; RDI = FILE* TO CLOSE
-    call    fclose
-    xor     eax, eax            ; RETURN NULL
-    jmp     .readPPM_end
+    ; Close the file
+    mov rdi, rax               ; File descriptor
+    call close
 
-.process_valid_file:           
-    ; ALLOCATE ROW POINTER ARRAY
-    mov     eax, [rbp-76]       ; EAX = HEIGHT
-    cdqe                        ; SIGN-EXTEND TO 64-BIT
-    sal     rax, 3              ; MULTIPLY BY 8 (POINTER SIZE)
-    mov     rdi, rax            ; RDI = SIZE FOR MALLOC
-    call    malloc
-    mov     [rbp-48], rax       ; STORE ROW POINTERS ARRAY
+    ; Set the return value
+    mov rax, [pixel_head]
+    jmp .exit
 
-    mov     qword [rbp-56], 0   ; INITIALIZE FIRST PIXEL PTR
-    mov     qword [rbp-8], 0    ; INITIALIZE ABOVE PIXEL PTR
-    mov     dword [rbp-12], 0   ; INITIALIZE ROW COUNTER
+.open_failed:
+    ; Error handling for file open failure
+    mov rdi, open_failed_msg
+    call print_error
+    xor rax, rax
+    jmp .exit
 
-.row_loop:
-    mov     dword [rbp-28], 0   ; RESET COLUMN COUNTER
-    mov     qword [rbp-24], 0   ; RESET PREVIOUS PIXEL PTR
+.read_failed:
+    ; Error handling for file read failure
+    mov rdi, read_failed_msg
+    call print_error
+    xor rax, rax
+    jmp .exit
 
-.pixel_loop:
-    ; ALLOCATE PIXEL STRUCTURE
-    mov     edi, 40             ; 40 BYTES FOR PIXEL STRUCT
-    call    malloc
-    mov     [rbp-64], rax       ; STORE NEW PIXEL PTR
+.parse_failed:
+    ; Error handling for header parsing failure
+    mov rdi, parse_failed_msg
+    call print_error
+    xor rax, rax
+    jmp .exit
 
-    ; READ RGB VALUES
-    mov     rax, [rbp-64]       ; DESTINATION FOR RED
-    mov     rdx, [rbp-40]       ; FILE*
-    mov     rcx, rdx            ; RCX = FILE* FOR FREAD
-    mov     edx, 1              ; READ 1 BYTE
-    mov     esi, 1              ; READ 1 TIME
-    mov     rdi, rax            ; RDI = DESTINATION
-    call    fread               ; READ RED VALUE
+.create_failed:
+    ; Error handling for linked list creation failure
+    mov rdi, parse_failed_msg
+    call print_error
+    xor rax, rax
 
-    mov     rax, [rbp-64]
-    lea     rdi, [rax+1]        ; DESTINATION FOR GREEN
-    mov     rax, [rbp-40]
-    mov     rcx, rax            ; RCX = FILE*
-    mov     edx, 1
-    mov     esi, 1
-    call    fread               ; READ GREEN VALUE
+.exit:
+    ; Function epilogue
+    mov rsp, rbp
+    pop rbp
+    ret
 
-    mov     rax, [rbp-64]
-    lea     rdi, [rax+2]        ; DESTINATION FOR BLUE
-    mov     rax, [rbp-40]
-    mov     rcx, rax            ; RCX = FILE*
-    mov     edx, 1
-    mov     esi, 1
-    call    fread               ; READ BLUE VALUE
+print_filename:
+    ; Print "Attempting to open file: " message
+    mov rax, 1                 ; syscall: write
+    mov rdi, 1                 ; file descriptor: stdout
+    mov rsi, open_file_msg     ; message to print
+    mov rdx, 26                ; length of the message
+    syscall
 
-    ; INITIALIZE PIXEL POINTERS
-    mov     rax, [rbp-64]
-    mov     byte [rax+3], 0     ; SET PADDING BYTE
-    mov     rax, [rbp-64]
-    mov     qword [rax+32], 0   ; CLEAR RIGHT PTR
-    mov     rax, [rbp-64]
-    mov     rdx, [rax+32]
-    mov     qword [rax+24], rdx ; CLEAR LEFT PTR
-    mov     rax, [rbp-64]
-    mov     rdx, [rax+24]
-    mov     qword [rax+16], rdx ; CLEAR BELOW PTR
-    mov     rax, [rbp-64]
-    mov     rdx, [rax+16]
-    mov     qword [rax+8], rdx  ; CLEAR ABOVE PTR
+    ; Print the filename passed in rsi
+    ; Assume rsi points to the filename string
+    mov rax, 1                 ; syscall: write
+    mov rdi, 1                 ; file descriptor: stdout
+    mov rdx, 0                 ; Initialize rdx to 0
+find_length:
+    ; Calculate the length of the filename
+    cmp byte [rsi + rdx], 0    ; Check for null terminator
+    je print_name              ; If found, jump to printing
+    inc rdx                    ; Increment length
+    jmp find_length            ; Repeat until end of string
 
-    ; HANDLE ROW START
-    cmp     dword [rbp-28], 0   ; FIRST PIXEL IN ROW?
-    jne     .skip_row_start
-    mov     eax, [rbp-12]       ; CURRENT ROW NUMBER
-    cdqe
-    lea     rdx, [rax*8]        ; CALCULATE OFFSET
-    mov     rax, [rbp-48]       ; ROW POINTERS ARRAY
-    add     rdx, rax            ; ADD BASE ADDRESS
-    mov     rax, [rbp-64]       ; CURRENT PIXEL
-    mov     [rdx], rax          ; STORE ROW START
+print_name:
+    ; Now rdx holds the length of the filename
+    mov rax, 1                 ; syscall: write
+    mov rdi, 1                 ; file descriptor: stdout
+    syscall
 
-.skip_row_start:
-    ; LINK HORIZONTAL PIXELS
-    cmp     qword [rbp-24], 0   ; PREVIOUS PIXEL EXISTS?
-    je      .skip_horizontal
-    mov     rax, [rbp-24]
-    mov     rdx, [rbp-64]
-    mov     [rax+32], rdx       ; LINK PREVIOUS->CURRENT
-    mov     rax, [rbp-64]
-    mov     rdx, [rbp-24]
-    mov     [rax+24], rdx       ; LINK CURRENT->PREVIOUS
+    ; Print a newline
+    mov rax, 1                 ; syscall: write
+    mov rdi, 1                 ; file descriptor: stdout
+    mov rsi, newline           ; newline character
+    mov rdx, 1                 ; length of newline
+    syscall
+    ret
 
-.skip_horizontal:
-    ; LINK VERTICAL PIXELS
-    cmp     qword [rbp-8], 0    ; ABOVE PIXEL EXISTS?
-    je      .skip_vertical
-    mov     rax, [rbp-8]
-    mov     rdx, [rbp-64]
-    mov     [rax+16], rdx       ; LINK ABOVE->CURRENT
-    mov     rax, [rbp-64]
-    mov     rdx, [rbp-8]
-    mov     [rax+8], rdx        ; LINK CURRENT->ABOVE
-    mov     rax, [rbp-8]
-    mov     rax, [rax+32]       ; MOVE TO NEXT ABOVE PIXEL
-    mov     [rbp-8], rax
+print_error:
+    ; Use the write system call to print the error message to stderr
+    mov rax, 1                 ; syscall: write
+    mov rdi, 2                 ; file descriptor: stderr
+    mov rsi, rdi               ; error message to print
+    mov rdx, 30                ; length of the message (adjust as needed)
+    syscall
+    ret
 
-.skip_vertical:
-    ; LINK HORIZONTAL PIXELS
-    mov     rax, [rbp-64]
-    mov     [rbp-24], rax       ; UPDATE PREVIOUS PIXEL
-    inc     dword [rbp-28]      ; NEXT COLUMN
+parseHeader:
+    ; Parse the PPM header from the buffer
+    ; Extract width, height, and max_color_value
+    ; Return 1 if successful, 0 if parsing fails
+    ; Assume format: P6\n<width> <height>\n<maxColorValue>\n
+    ; This implementation needs to handle comments and skip whitespace
+    ret
 
-    mov     eax, [rbp-72]       ; CHECK COLUMN LIMIT
-    cmp     [rbp-28], eax
-    jl      .pixel_loop         ; CONTINUE IF MORE COLUMNS
-
-    ; PREPARE NEXT ROW
-    mov     eax, [rbp-12]
-    cdqe
-    lea     rdx, [rax*8]
-    mov     rax, [rbp-48]
-    add     rax, rdx
-    mov     rax, [rax]          ; GET ROW START
-    mov     [rbp-8], rax        ; STORE FOR VERTICAL LINKING
-    inc     dword [rbp-12]      ; NEXT ROW
-
-    mov     eax, [rbp-76]       ; CHECK ROW LIMIT
-    cmp     [rbp-12], eax
-    jl      .row_loop           ; CONTINUE IF MORE ROWS
-
-    ; CLEANUP AND RETURN
-    mov     rax, [rbp-48]
-    mov     rax, [rax]
-    mov     [rbp-56], rax       ; STORE FIRST PIXEL
-
-    mov     rax, [rbp-48]
-    mov     rdi, rax            ; FREE ROW POINTERS
-    call    free
-
-    mov     rax, [rbp-40]
-    mov     rdi, rax            ; CLOSE FILE
-    call    fclose
-
-    mov     rax, [rbp-56]       ; RETURN FIRST PIXEL POINTER
-
-.readPPM_end:                 
-    leave                       ; RESTORE STACK FRAME
+createPixelLinkedList:
+    ; Create a 2D array of PixelNodes based on the parsed width and height
+    ; Allocate memory for each PixelNode using malloc
+    ; Set the up, down, left, right pointers to form a linked list structure
+    ; Return 1 if successful, 0 if creation fails
     ret
