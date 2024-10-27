@@ -1,37 +1,37 @@
 ; ==========================
-; Group member 01: Michael Todd U23540223
-; Group member 02: Corne de Lange u23788862
-; Group member 03: Cobus Botha u23556502
+; GROUP MEMBER 01: MICHAEL TODD U23540223
+; GROUP MEMBER 02: CORNE DE LANGE U23788862
+; GROUP MEMBER 03: COBUS BOTHA U23556502
 ; ==========================
 
 section .data
-    p6_header db "P6", 10          
-    maxval db "255", 10           
-    space db " "                   
-    newline db 10                  
-    err_msg db "Error opening file", 10
-    err_len equ $ - err_msg
+    p6_header db "P6", 10          ; P6 HEADER FOR PPM FILE
+    maxval db "255", 10            ; MAX COLOR VALUE
+    space db " "                   ; SPACE CHARACTER
+    newline db 10                  ; NEWLINE CHARACTER
+    err_msg db "ERROR OPENING FILE", 10 ; ERROR MESSAGE
+    err_len equ $ - err_msg        ; LENGTH OF ERROR MESSAGE
 
 section .bss
-    number_buffer resb 20          ;for number conversion
+    number_buffer resb 20          ; BUFFER FOR NUMBER CONVERSION
 
 section .text
 global writePPM
-extern printf    ; For debugging
+extern printf    ; FOR DEBUGGING
 
-; System calls
+; SYSTEM CALLS
 SYS_OPEN equ 2
 SYS_CLOSE equ 3
 SYS_WRITE equ 1
 SYS_EXIT equ 60
 
-; File open flags
+; FILE OPEN FLAGS
 O_WRONLY equ 1
 O_CREAT equ 64
 O_TRUNC equ 512
 
-; File permissions
-MODE equ 0644o                     ; -rw-r--r--
+; FILE PERMISSIONS
+MODE equ 0644o                     ; -RW-R--R--
 
 writePPM:
     push rbp
@@ -44,139 +44,138 @@ writePPM:
     push r15
     sub rsp, 48
 
+    mov [rbp-8], rdi              ; FILENAME
+    mov [rbp-16], rsi             ; HEAD POINTER
 
-    mov [rbp-8], rdi              ; filename
-    mov [rbp-16], rsi             ; head pointer
-
-    ; have to calculate width by counting the number of nodes in the first row
-    xor r14, r14                  ; width = 0
-    mov r12, [rbp-16]             ; current = head
+    ; CALCULATE WIDTH BY COUNTING NODES IN THE FIRST ROW
+    xor r14, r14                  ; WIDTH = 0
+    mov r12, [rbp-16]             ; CURRENT = HEAD
 .count_width:
     test r12, r12
     jz .width_done
-    inc r14                       ; increment width
-    mov r12, [r12+32]             ; curr = curr->right
+    inc r14                       ; INCREMENT WIDTH
+    mov r12, [r12+32]             ; CURRENT = CURRENT->RIGHT
     jmp .count_width
 .width_done:
-    mov [rbp-32], r14             ; save width
+    mov [rbp-32], r14             ; SAVE WIDTH
 
-    ; after have to calculate height by counting the number of nodes in the first column
-    xor r15, r15                  ; height = 0
-    mov r12, [rbp-16]             ; current = head
+    ; CALCULATE HEIGHT BY COUNTING NODES IN THE FIRST COLUMN
+    xor r15, r15                  ; HEIGHT = 0
+    mov r12, [rbp-16]             ; CURRENT = HEAD
 .count_height:
     test r12, r12
     jz .height_done
-    inc r15                       ; increment height
-    mov r12, [r12+16]             ; curr = curr->down
+    inc r15                       ; INCREMENT HEIGHT
+    mov r12, [r12+16]             ; CURRENT = CURRENT->DOWN
     jmp .count_height
 .height_done:
-    mov [rbp-40], r15             ; save height
+    mov [rbp-40], r15             ; SAVE HEIGHT
 
-    ; Open file
+    ; OPEN FILE
     mov rax, SYS_OPEN
-    mov rdi, [rbp-8]              ; filename
+    mov rdi, [rbp-8]              ; FILENAME
     mov rsi, O_WRONLY | O_CREAT | O_TRUNC
     mov rdx, MODE
     syscall
     
     test rax, rax
-    js .error_exit                ; Jump if sign flag is set (negative result)
-    mov [rbp-24], rax             ; save file descriptor
+    js .error_exit                ; JUMP IF SIGN FLAG IS SET (NEGATIVE RESULT)
+    mov [rbp-24], rax             ; SAVE FILE DESCRIPTOR
 
-  
-    mov rax, SYS_WRITE                ; write P6 header
+    ; WRITE P6 HEADER
+    mov rax, SYS_WRITE
     mov rdi, [rbp-24]
     mov rsi, p6_header
     mov rdx, 3
     syscall
 
-        ; write width
-    mov rdi, r14                  ; width
+    ; WRITE WIDTH
+    mov rdi, r14                  ; WIDTH
     mov rsi, number_buffer
     call number_to_ascii
-    mov rdx, rax                  ; length of number string
+    mov rdx, rax                  ; LENGTH OF NUMBER STRING
     mov rax, SYS_WRITE
     mov rdi, [rbp-24]
     mov rsi, number_buffer
     syscall
 
-    ; write space
+    ; WRITE SPACE
     mov rax, SYS_WRITE
     mov rdi, [rbp-24]
     mov rsi, space
     mov rdx, 1
     syscall
 
-    ; write height
-    mov rdi, r15                  ; height
+    ; WRITE HEIGHT
+    mov rdi, r15                  ; HEIGHT
     mov rsi, number_buffer
     call number_to_ascii
-    mov rdx, rax                  ; length of number string
+    mov rdx, rax                  ; LENGTH OF NUMBER STRING
     mov rax, SYS_WRITE
     mov rdi, [rbp-24]
     mov rsi, number_buffer
     syscall
 
-    ; write newline
+    ; WRITE NEWLINE
     mov rax, SYS_WRITE
     mov rdi, [rbp-24]
     mov rsi, newline
     mov rdx, 1
     syscall
 
-    ; write max color value
+    ; WRITE MAX COLOR VALUE
     mov rax, SYS_WRITE
     mov rdi, [rbp-24]
     mov rsi, maxval
     mov rdx, 4
     syscall
 
-    ; write pixel data
-    mov r12, [rbp-16]            ; currRow = head
+    ; WRITE PIXEL DATA
+    mov r12, [rbp-16]            ; CURRENT ROW = HEAD
 .row_loop:
     test r12, r12
     jz .write_done
    
-    mov r13, r12                 ; currPixel = currRow
+    mov r13, r12                 ; CURRENT PIXEL = CURRENT ROW
 
 .pixel_loop:
     test r13, r13
     jz .next_row
 
-    ; write RGB values each is 1byte
+    ; WRITE RGB VALUES (EACH IS 1 BYTE)
     mov rax, SYS_WRITE
-    mov rdi, [rbp-24]            ; file descriptor
-    mov rsi, r13                 ; address of RGB values (Red, Green, Blue)
-    mov rdx, 3                   ; write 3 bytes (R, G, B)
+    mov rdi, [rbp-24]            ; FILE DESCRIPTOR
+    mov rsi, r13                 ; ADDRESS OF RGB VALUES (RED, GREEN, BLUE)
+    mov rdx, 3                   ; WRITE 3 BYTES (R, G, B)
     syscall
 
-    mov r13, [r13+32]            ; currPixel = currPixel->right
+    mov r13, [r13+32]            ; CURRENT PIXEL = CURRENT PIXEL->RIGHT
     jmp .pixel_loop
 
 .next_row:
-    mov r12, [r12+16]            ; currRow = currRow->down
+    mov r12, [r12+16]            ; CURRENT ROW = CURRENT ROW->DOWN
     jmp .row_loop
 
 .write_done:
-    ; Close file
+    ; CLOSE FILE
     mov rax, SYS_CLOSE
-    mov rdi, [rbp-24]            ; file descriptor
+    mov rdi, [rbp-24]            ; FILE DESCRIPTOR
     syscall
-    xor eax, eax                 ; return if success
+    xor eax, eax                 ; RETURN SUCCESS
     jmp .end
 
 .error_exit:
-    ; print error message to stderr (file descriptor 2)
+    ; PRINT ERROR MESSAGE TO STDERR (FILE DESCRIPTOR 2)
     mov rax, SYS_WRITE
-    mov rdi, 2                   ; stderr
+    mov rdi, 2                   ; STDERR
     mov rsi, err_msg
     mov rdx, err_len
     syscall
     
-    mov eax, 1                   ; return error code
+    mov eax, 1                   ; RETURN ERROR CODE
 
 .end:
-    ; restore registers
+    ; RESTORE REGISTERS
     add rsp, 48
     pop r15
     pop r14
@@ -186,16 +185,16 @@ writePPM:
     pop rbp
     ret
 
-; have to convert number to ASCII in the buffer
+; CONVERT NUMBER TO ASCII IN THE BUFFER
 number_to_ascii:
     push rbp
     mov rbp, rsp
-    mov rax, rdi                ; number to convert
-    mov rdi, rsi                ; buffer to write to
-    mov rcx, 0                  ; digit count
-    mov r8, 10                  ; divisor
+    mov rax, rdi                ; NUMBER TO CONVERT
+    mov rdi, rsi                ; BUFFER TO WRITE TO
+    mov rcx, 0                  ; DIGIT COUNT
+    mov r8, 10                  ; DIVISOR
     
-    ; error handling for zero specially
+    ; SPECIAL CASE FOR ZERO
     test rax, rax
     jnz .convert_loop
     mov byte [rdi], '0'
@@ -213,11 +212,11 @@ number_to_ascii:
     jmp .convert_loop
 
 .reverse:
-    mov rax, rcx               ; save length
+    mov rax, rcx               ; SAVE LENGTH
     mov r9, rcx
-    shr rcx, 1                 ; divide by 2
-    dec r9                     ; last index
-    xor r8, r8                 ; first index
+    shr rcx, 1                 ; DIVIDE BY 2
+    dec r9                     ; LAST INDEX
+    xor r8, r8                 ; FIRST INDEX
 
 .reverse_loop:
     test rcx, rcx
