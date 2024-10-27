@@ -1,64 +1,42 @@
 ; ==========================
-; Group member 01: Michael Todd U23540223
-; Group member 02: Corne de Lange u23788862
-; Group member 03: Cobus Botha u23556502
+; Group member 01: Name_Surname_student-nr
+; Group member 02: Name_Surname_student-nr
+; Group member 03: Name_Surname_student-nr
+; Group member 04: Name_Surname_student-nr
+; Group member 05: Name_Surname_student-nr
 ; ==========================
 
-section .data
-    half dd 0.5         
-    zero dd 0             
-    max_val db 255        
-
 section .text
+    extern pixel_head           ; Declare pixel_head as external
     global applyHistogramEqualization
 
-
 applyHistogramEqualization:
+    ; Function prologue
     push rbp
     mov rbp, rsp
-    push rbx
-    push rdi
-    push rsi
-    mov rsi, rdi       
 
-outer_loop:
-    test rsi, rsi         
-    jz done_outer
+    ; Traverse linked list
+    ; Update RGB values based on the normalized CdfValue
+    mov rdi, [pixel_head]       ; Use pixel_head, now declared as external
 
-    mov rbx, rsi          ; rbx = currentPixel = currentRow
+.apply_pixels:
+    test rdi, rdi
+    jz .done
 
-inner_loop:
-    test rbx, rbx        
-    jz done_inner
+    ; Get the normalized CdfValue
+    movzx rax, byte [rdi + 3]   ; Assuming CdfValue is at offset 3
 
-    movzx eax, byte [rbx + 3]    ;loading cdf value    
-    cvtsi2ss xmm0, eax           ; cdfvalue must be taken to float for rounding section in c code
-    addss xmm0, dword [half]     ; Add 0.5 for rounding
-    cvttss2si eax, xmm0          ; set back to an integer with truncation
-    
-    ; begining of the if statement in c code for clamping
-    cmp eax, 0
-    cmovl eax, dword [rel zero]  
-    cmp eax, 255
-    cmovg eax, dword [rel max_val] 
-    
-    mov byte [rbx], al           ; Red
-    mov byte [rbx + 1], al       ; Green
-    mov byte [rbx + 2], al       ; Blue
-    ; pixel = right pointer which is at an offset of 32
-    mov rbx, [rbx + 32]
-    jmp inner_loop
+    ; Update all RGB values to the new grayscale value
+    mov [rdi + 0], al
+    mov [rdi + 1], al
+    mov [rdi + 2], al
 
-done_inner:
-    ;down pointer is at offset 16 hence we move to it
-    mov rsi, [rsi + 16]
-    jmp outer_loop
+    ; Move to the next pixel
+    mov rdi, [rdi + 16]         ; Right pointer offset
+    jmp .apply_pixels
 
-done_outer:
-    pop rsi
-    pop rdi
-    pop rbx
+.done:
+    ; Function epilogue
     mov rsp, rbp
     pop rbp
     ret
-    
