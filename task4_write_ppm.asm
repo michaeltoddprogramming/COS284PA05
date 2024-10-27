@@ -5,202 +5,232 @@
 ; ==========================
 
 section .data
-
-struc Pixel
-    .red:  resb 1                       ; Reserve 1 byte for Red, Green and Blue 
-    .green: resb 1  
-    .blue: resb 1
-    .cdfValue: resb 1                   ; Reserve 1 byte for char
-    align 8 
-    .up: resq 1                         ; Reserve 1 qword for ptr
-    .down: resq 1                       ; Reserve 1 qword for ptr
-    .left: resq 1                       ; Reserve 1 qword for ptr
-    .right: resq 1                      ; Reserve 1 qword for ptr
-endstruc
-
-    width dq 0                          ; Used to store the wifth of the image
-    height dq 0                         ; Used to store the height of the image
-    width_length equ 8            ; Length of the variables for file-writing
-    space db ' ', 0                     ; Space for between width and height
-    space_length equ 1            ; Length of the space
-    height_length equ 8          ; Length of the height
-    p db 'P6', 0x0A, 0                  ; P6 for the header of the file
-    p_length equ $-p                    ; And it's length
-    new_line db 0x0A                    ; New-line character for file-writing
-    max_colour db 255
+    p6_header db "P6", 10          
+    maxval db "255", 10           
+    space db " "                   
+    newline db 10                  
+    err_msg db "Error opening file", 10
+    err_len equ $ - err_msg
 
 section .bss
-
-    curr_height: resb 8                 ; Buffer to store the current height when traversing through the list
+    number_buffer resb 20          ;for number conversion
 
 section .text
-    global writePPM
+global writePPM
+extern printf    ; For debugging
+
+; System calls
+SYS_OPEN equ 2
+SYS_CLOSE equ 3
+SYS_WRITE equ 1
+SYS_EXIT equ 60
+
+; File open flags
+O_WRONLY equ 1
+O_CREAT equ 64
+O_TRUNC equ 512
+
+; File permissions
+MODE equ 0644o                     ; -rw-r--r--
 
 writePPM:
+    push rbp
+    mov rbp, rsp
+ 
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 48
+
+
+    mov [rbp-8], rdi              ; filename
+    mov [rbp-16], rsi             ; head pointer
+
+    ; have to calculate width by counting the number of nodes in the first row
+    xor r14, r14                  ; width = 0
+    mov r12, [rbp-16]             ; current = head
+.count_width:
+    test r12, r12
+    jz .width_done
+    inc r14                       ; increment width
+    mov r12, [r12+32]             ; curr = curr->right
+    jmp .count_width
+.width_done:
+    mov [rbp-32], r14             ; save width
+
+    ; after have to calculate height by counting the number of nodes in the first column
+    xor r15, r15                  ; height = 0
+    mov r12, [rbp-16]             ; current = head
+.count_height:
+    test r12, r12
+    jz .height_done
+    inc r15                       ; increment height
+    mov r12, [r12+16]             ; curr = curr->down
+    jmp .count_height
+.height_done:
+    mov [rbp-40], r15             ; save height
+
+    ; Open file
+    mov rax, SYS_OPEN
+    mov rdi, [rbp-8]              ; filename
+    mov rsi, O_WRONLY | O_CREAT | O_TRUNC
+    mov rdx, MODE
+    syscall
     
-    mov rsi, [rsp+8]                    ; Get the argv array
-    mov r15, [rsi+8]                    ; Store the filename in r15, since rdi will be used
+    test rax, rax
+    js .error_exit                ; Jump if sign flag is set (negative result)
+    mov [rbp-24], rax             ; save file descriptor
 
-    mov rbx, [rsi+16]                        ; Move the pointer to the first PixelNode into rbx for width traversal
-    mov rdx, [rsi+16]                        ; Move the pointer to the first PixelNode into rdx for height traversal
-    mov r8, [rsi+16]                         ; Move pointer into r8 for later traversal
-
-    xor rax, rax                        ; Register for counts
-    xor rdi, rdi
-    mov rdi, r8                         ; Set the first argument for the width_loop function (needs the pointer to first PixelNode)
-    call width_loop                     ; Get width 
-    mov [width], rax                    ; return value will be in rax, store this in the with variable
-
-    xor rax, rax                        
-    xor rdi, rdi
-    mov rdi, r8                         ; Set the first argument for the height_loop function
-    call height_loop                    ; Get height
-    mov [height], rax                   ; Store the return value inside the height variable
-    xor rax, rax
-
-    xor rsi, rsi
-
-    ; Open the file
-    mov rdi, r15                        ; Specify where the file name is stored
-    mov rsi, 1                          ; Use code 1 for binary write
-    mov rax, 2                          ; Use code 2 to specify that we want to open the file
-    syscall                             ; Make syscall to open the file
-
-    mov rbx, rax                        ; Save the file descriptor
-    cmp rax, -1                         ; Check whether the open call was successful
-    je open_err                         ; If not leave
-
-    xor rax, rax
-
-    ; Write P6, width, space, height and maxcolorval to the file
-
-    mov rax, 1                          ; Specify that we want to write to the file
-    mov rsi, p                          ; Specify what we want to write
-    mov rdx, p_length                   ; Specify the length of what will be written
-    syscall 
-
-    mov rax, 1                          
-    mov rsi, width
-    mov rdx, width_length
+  
+    mov rax, SYS_WRITE                ; write P6 header
+    mov rdi, [rbp-24]
+    mov rsi, p6_header
+    mov rdx, 3
     syscall
 
-    mov rax, 1
+        ; write width
+    mov rdi, r14                  ; width
+    mov rsi, number_buffer
+    call number_to_ascii
+    mov rdx, rax                  ; length of number string
+    mov rax, SYS_WRITE
+    mov rdi, [rbp-24]
+    mov rsi, number_buffer
+    syscall
+
+    ; write space
+    mov rax, SYS_WRITE
+    mov rdi, [rbp-24]
     mov rsi, space
-    mov rdx, space_length
-    syscall
-
-    mov rax, 1
-    mov rsi, height
-    mov rdx, height_length
-    syscall
-
-    mov rax, 1
-    mov rsi, new_line
     mov rdx, 1
     syscall
 
-    mov rax, 1
-    mov rsi, maxcolour
+    ; write height
+    mov rdi, r15                  ; height
+    mov rsi, number_buffer
+    call number_to_ascii
+    mov rdx, rax                  ; length of number string
+    mov rax, SYS_WRITE
+    mov rdi, [rbp-24]
+    mov rsi, number_buffer
+    syscall
+
+    ; write newline
+    mov rax, SYS_WRITE
+    mov rdi, [rbp-24]
+    mov rsi, newline
     mov rdx, 1
     syscall
 
-    mov rax, 1
-    mov rsi, new_line
-    mov rdx, 1
+    ; write max color value
+    mov rax, SYS_WRITE
+    mov rdi, [rbp-24]
+    mov rsi, maxval
+    mov rdx, 4
     syscall
 
-    ; Now we traverse the linked list and store the rgb values
-    xor rdi, rdi
-    mov rdi, r8                            ; Store the pointer to the first Pixel-node in rdi (first argument)
-    xor r12, r12 
-    mov qword [curr_height], 0             ; Set curr_height to 0
-    call go_right                          ; Call traversal function
+    ; write pixel data
+    mov r12, [rbp-16]            ; currRow = head
+.row_loop:
+    test r12, r12
+    jz .write_done
+   
+    mov r13, r12                 ; currPixel = currRow
 
-    ; Close the file
-    xor rax, rax
-    mov rax, 3                              ; Code 3 used to specify that we want to close the file
+.pixel_loop:
+    test r13, r13
+    jz .next_row
+
+    ; write RGB values each is 1byte
+    mov rax, SYS_WRITE
+    mov rdi, [rbp-24]            ; file descriptor
+    mov rsi, r13                 ; address of RGB values (Red, Green, Blue)
+    mov rdx, 3                   ; write 3 bytes (R, G, B)
     syscall
 
-    ; Exit
-    mov rax, 60                             ; Code 60 the exit
-    xor rdi, rdi                            ; With status code 0
-    syscall                 
+    mov r13, [r13+32]            ; currPixel = currPixel->right
+    jmp .pixel_loop
 
-; Used to traverse to the right and to write the rgb values
-go_right:
+.next_row:
+    mov r12, [r12+16]            ; currRow = currRow->down
+    jmp .row_loop
 
-    mov r13, rdi                            ; Store the pointer in r13, since rdi will be used as argument in write_byte      
-    mov rdi, [r13 + Pixel.red]              ; Retrieve the red value
-    call write_byte                         ; Call write_byte to write the byte stored in rdi to the file
-                                                    
-    mov rdi, [r13 + Pixel.green]
-    call write_byte
+.write_done:
+    ; Close file
+    mov rax, SYS_CLOSE
+    mov rdi, [rbp-24]            ; file descriptor
+    syscall
+    xor eax, eax                 ; return if success
+    jmp .end
 
-    mov rdi, [r13 + Pixel.blue]
-    call write_byte
-    mov rdi, r13                            ; Restore rdi to contain the pointer
-
-    xor r8, r8                              ; Ensure r8 is zero (this will be the counter for the left traversal)
-    inc r12                                 ; Increase the r12 (the counter for the right traversal)
-    cmp r12, width                          ; Check whether we have reached the end of the row
-    je go_left                              ; If so, traverse left (and then go down to start the left traversal of the next row)
-    mov rdi, [rdi + Pixel.right]            ; Otherwise, go to the next pixelnode onthe right
-    jmp go_right                            ; Repeat the above
+.error_exit:
+    ; print error message to stderr (file descriptor 2)
+    mov rax, SYS_WRITE
+    mov rdi, 2                   ; stderr
+    mov rsi, err_msg
+    mov rdx, err_len
+    syscall
     
-; Used to resest the pointer in rdi to the beginning of the row
-go_left:
+    mov eax, 1                   ; return error code
 
-    xor r12, r12
-    inc r8                                  ; Increase value in r8
-    cmp r8, width                           ; Compare it with the now known width of the linked list (check if we are at the left-end of the list)
-    je go_down                              ; If so go down to the next row
-    mov rdi, [rdi + Pixel.left]             ; Else go to the next pixelnode on the left
-    jmp go_left                             ; Repeat
-
-; Used to go one row down
-go_down:
-               
-    cmp [curr_height], height               ; Check if we have reached the bottom of the linked list
-    je end_loop                             ; If so we are done
-    mov rdi, [rdi + Pixel.down]             ; Else go to the next pixelnode in the row below
-    inc qword [curr_height]                 ; Increase the curr_height counter
-    jmp go_right                            ; Start the right traversal again
-
-; Used to write one byte to the opened file
-write_byte:
-
-    mov rax, 1                              ; Specify that we want to write to the file
-    mov rsi, rdi                            ; Specify we want to write the value in rdi
-    mov rdi, rbx                            ; Load file descriptor
-    mov rdx, 1                              ; Specify that we are writing one byte
-    syscall                         
-    ret 
-
-; Used to count the columns
-width_loop:
-
-   test rdi, rdi                            ; Check if we have reached the end of row
-   jz end_loop                              ; If so end the traversal
-   inc rax                                  ; Otherwise inc the col count
-   mov rdi, [rdi + Pixel.right]             ; Go to the next pixelnode on the right
-   jmp width_loop                           ; Repeat
-
-; Used to count the rows
-height_loop:
-
-    test rdi, rdi                              ; Check if we reached the end of the col
-    jz end_loop                             ; If so return
-    inc rax
-    mov rdi, [rdi + Pixel.down]             ; Go to the next pixelnode in the row below
-    jmp height_loop                         ; Repeat
-
-; Used to return to the calling function 
-end_loop:
+.end:
+    ; restore registers
+    add rsp, 48
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
     ret
 
-; Used to exit if the opening of the file failed
-open_err:
-    mov rax, 60                             ; Code to exit
-    xor rdi, rdi                            ; With status code 0
-    syscall
+; have to convert number to ASCII in the buffer
+number_to_ascii:
+    push rbp
+    mov rbp, rsp
+    mov rax, rdi                ; number to convert
+    mov rdi, rsi                ; buffer to write to
+    mov rcx, 0                  ; digit count
+    mov r8, 10                  ; divisor
     
+    ; error handling for zero specially
+    test rax, rax
+    jnz .convert_loop
+    mov byte [rdi], '0'
+    mov rax, 1
+    jmp .done
+
+.convert_loop:
+    test rax, rax
+    jz .reverse
+    xor rdx, rdx
+    div r8
+    add dl, '0'
+    mov [rdi + rcx], dl
+    inc rcx
+    jmp .convert_loop
+
+.reverse:
+    mov rax, rcx               ; save length
+    mov r9, rcx
+    shr rcx, 1                 ; divide by 2
+    dec r9                     ; last index
+    xor r8, r8                 ; first index
+
+.reverse_loop:
+    test rcx, rcx
+    jz .done
+    mov dl, [rdi + r8]
+    mov bl, [rdi + r9]
+    mov [rdi + r8], bl
+    mov [rdi + r9], dl
+    inc r8
+    dec r9
+    dec rcx
+    jmp .reverse_loop
+
+.done:
+    leave
+    ret
