@@ -1,9 +1,7 @@
 ; ==========================
-; Group member 01: Name_Surname_student-nr
-; Group member 02: Name_Surname_student-nr
-; Group member 03: Name_Surname_student-nr
-; Group member 04: Name_Surname_student-nr
-; Group member 05: Name_Surname_student-nr
+; Group member 01: Michael Todd U23540223
+; Group member 02: Corne de Lange u23788862
+; Group member 03: Cobus Botha u23556502
 ; ==========================
 
 extern malloc
