@@ -5,60 +5,116 @@
 ; ==========================
 
 section .data
-    half dd 0.5         
-    zero dd 0             
-    max_val db 255        
+    align 8
+    floatConstant: dq 1071644672   ; FLOAT CONSTANT FOR HISTOGRAM EQUALIZATION
 
 section .text
-    global applyHistogramEqualization
+    global clamp
+    global applyHistogramEqualisation
 
-applyHistogramEqualization:
-    push rbp
-    mov rbp, rsp
-    push rbx
-    push rdi
-    push rsi
-    mov rsi, rdi       ; SET RSI TO POINT TO THE HEAD OF THE PIXEL LIST
+clamp:
+    push    rbp
+    mov     rbp, rsp
+    ; STORE INPUT VALUE IN LOCAL VARIABLE
+    mov     [rbp-4], edi
+    ; CHECK IF VALUE IS GREATER THAN 255
+    cmp     dword [rbp-4], 255
+    jle     checkLowerBound
+    ; IF GREATER THAN 255, SET TO 255
+    mov     eax, -1
+    jmp     returnClamp
 
-outer_loop:
-    test rsi, rsi      ; CHECK IF THE CURRENT ROW POINTER IS NULL
-    jz done_outer      ; IF NULL, EXIT OUTER LOOP
+checkLowerBound:
+    ; CHECK IF VALUE IS LESS THAN 0
+    cmp     dword [rbp-4], 0
+    jns     returnInput
+    ; IF LESS THAN 0, SET TO 0
+    mov     eax, 0
+    jmp     returnClamp
 
-    mov rbx, rsi       ; SET RBX TO POINT TO THE CURRENT PIXEL (CURRENT ROW)
+returnInput:
+    ; RETURN INPUT VALUE
+    mov     eax, [rbp-4]
 
-inner_loop:
-    test rbx, rbx      ; CHECK IF THE CURRENT PIXEL POINTER IS NULL
-    jz done_inner      ; IF NULL, EXIT INNER LOOP
+returnClamp:
+    pop     rbp
+    ret
 
-    movzx eax, byte [rbx + 3]    ; LOAD CDF VALUE FROM PIXEL
-    cvtsi2ss xmm0, eax           ; CONVERT CDF VALUE TO FLOAT FOR ROUNDING
-    addss xmm0, dword [half]     ; ADD 0.5 FOR ROUNDING
-    cvttss2si eax, xmm0          ; CONVERT BACK TO INTEGER WITH TRUNCATION
-    
+applyHistogramEqualisation:
+    push    rbp
+    mov     rbp, rsp
+    sub     rsp, 40
+    ; STORE INPUT POINTER IN LOCAL VARIABLE
+    mov     [rbp-40], rdi
+    ; CHECK IF INPUT POINTER IS NULL
+    cmp     qword [rbp-40], 0
+    je      handleNullInput
+    ; SET CURRENT ROW POINTER
+    mov     rax, [rbp-40]
+    mov     [rbp-8], rax
+    jmp     outerLoopStart
+
+processNextRow:
+    ; SET CURRENT PIXEL POINTER
+    mov     rax, [rbp-8]
+    mov     [rbp-16], rax
+    jmp     innerLoopStart
+
+processPixel:
+    ; LOAD CDF VALUE FROM PIXEL
+    mov     rax, [rbp-16]
+    movzx   eax, byte [rax+3]
+    movzx   eax, al
+    ; CONVERT CDF VALUE TO FLOAT
+    pxor    xmm0, xmm0
+    cvtsi2ss xmm0, eax
+    movss   [rbp-20], xmm0
+    pxor    xmm1, xmm1
+    cvtss2sd xmm1, [rbp-20]
+    ; ADD FLOAT CONSTANT
+    movsd   xmm0, [rel floatConstant]
+    addsd   xmm0, xmm1
+    ; CONVERT BACK TO INTEGER
+    cvttsd2si eax, xmm0
+    mov     [rbp-24], eax
+    mov     eax, [rbp-24]
     ; CLAMP THE VALUE BETWEEN 0 AND 255
-    cmp eax, 0
-    cmovl eax, dword [rel zero]  
-    cmp eax, 255
-    cmovg eax, dword [rel max_val] 
-    
+    mov     edi, eax
+    call    clamp
+    mov     [rbp-25], al
     ; SET RED, GREEN, AND BLUE COMPONENTS TO THE CLAMPED VALUE
-    mov byte [rbx], al           ; RED
-    mov byte [rbx + 1], al       ; GREEN
-    mov byte [rbx + 2], al       ; BLUE
-    
+    mov     rax, [rbp-16]
+    movzx   edx, byte [rbp-25]
+    mov     [rax], dl
+    mov     rax, [rbp-16]
+    movzx   edx, byte [rbp-25]
+    mov     [rax+1], dl
+    mov     rax, [rbp-16]
+    movzx   edx, byte [rbp-25]
+    mov     [rax+2], dl
     ; MOVE TO THE NEXT PIXEL USING THE RIGHT POINTER (OFFSET 32)
-    mov rbx, [rbx + 32]
-    jmp inner_loop
+    mov     rax, [rbp-16]
+    mov     rax, [rax+32]
+    mov     [rbp-16], rax
 
-done_inner:
+innerLoopStart:
+    ; CHECK IF CURRENT PIXEL POINTER IS NULL
+    cmp     qword [rbp-16], 0
+    jne     processPixel
     ; MOVE TO THE NEXT ROW USING THE DOWN POINTER (OFFSET 16)
-    mov rsi, [rsi + 16]
-    jmp outer_loop
+    mov     rax, [rbp-8]
+    mov     rax, [rax+16]
+    mov     [rbp-8], rax
 
-done_outer:
-    pop rsi
-    pop rdi
-    pop rbx
-    mov rsp, rbp
-    pop rbp
+outerLoopStart:
+    ; CHECK IF CURRENT ROW POINTER IS NULL
+    cmp     qword [rbp-8], 0
+    jne     processNextRow
+    jmp     returnHistogram
+
+handleNullInput:
+    nop
+
+returnHistogram:
+    leave
     ret
