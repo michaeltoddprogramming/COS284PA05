@@ -10,7 +10,7 @@ section .data
 
 section .text
     global clamp
-    global applyHistogramEqualisation
+    global applyHistogramEqualization
 
 clamp:
     push    rbp
@@ -40,7 +40,7 @@ returnClamp:
     pop     rbp
     ret
 
-applyHistogramEqualisation:
+applyHistogramEqualization:
     push    rbp
     mov     rbp, rsp
     sub     rsp, 40
