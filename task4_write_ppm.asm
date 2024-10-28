@@ -88,6 +88,8 @@ writePPM:
     mov rsi, p6_header
     mov rdx, 3
     syscall
+    test rax, rax
+    js .error_exit                ; CHECK FOR WRITE ERROR
 
     ; WRITE WIDTH
     mov rdi, r14                  ; WIDTH
@@ -98,6 +100,8 @@ writePPM:
     mov rdi, [rbp-24]
     mov rsi, number_buffer
     syscall
+    test rax, rax
+    js .error_exit                ; CHECK FOR WRITE ERROR
 
     ; WRITE SPACE
     mov rax, SYS_WRITE
@@ -105,6 +109,8 @@ writePPM:
     mov rsi, space
     mov rdx, 1
     syscall
+    test rax, rax
+    js .error_exit                ; CHECK FOR WRITE ERROR
 
     ; WRITE HEIGHT
     mov rdi, r15                  ; HEIGHT
@@ -115,6 +121,8 @@ writePPM:
     mov rdi, [rbp-24]
     mov rsi, number_buffer
     syscall
+    test rax, rax
+    js .error_exit                ; CHECK FOR WRITE ERROR
 
     ; WRITE NEWLINE
     mov rax, SYS_WRITE
@@ -122,6 +130,8 @@ writePPM:
     mov rsi, newline
     mov rdx, 1
     syscall
+    test rax, rax
+    js .error_exit                ; CHECK FOR WRITE ERROR
 
     ; WRITE MAX COLOR VALUE
     mov rax, SYS_WRITE
@@ -129,6 +139,8 @@ writePPM:
     mov rsi, maxval
     mov rdx, 4
     syscall
+    test rax, rax
+    js .error_exit                ; CHECK FOR WRITE ERROR
 
     ; WRITE PIXEL DATA
     mov r12, [rbp-16]            ; CURRENT ROW = HEAD
@@ -148,6 +160,8 @@ writePPM:
     mov rsi, r13                 ; ADDRESS OF RGB VALUES (RED, GREEN, BLUE)
     mov rdx, 3                   ; WRITE 3 BYTES (R, G, B)
     syscall
+    test rax, rax
+    js .error_exit                ; CHECK FOR WRITE ERROR
 
     mov r13, [r13+32]            ; CURRENT PIXEL = CURRENT PIXEL->RIGHT
     jmp .pixel_loop
